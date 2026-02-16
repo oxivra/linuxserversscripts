@@ -1,5 +1,4 @@
 #!/bin/bash
-
 ##################################################################################
 # This bash script is usefull to do a basic hardening of a new vps. This
 # script is designed to prepare a server to be connected and managed by Coolify.
@@ -19,6 +18,18 @@ fi
 ########################################
 # Interactive prompts (admin user)
 ########################################
+
+# Prompt for FQDN (non-empty, with validation in a loop)
+while true; do
+  read -p "Enter FQDN of this server (e.g., prd01.example.com): " SRV_FQDN_CUSTOM
+  if [ -n "$SRV_FQDN_CUSTOM" ]; then
+    # If SRV_FQDN_CUSTOM is not empty, break the loop
+    break
+  else
+    # Print an error message and prompt the user again
+    echo "Error: FQDN cannot be empty. Please try again."
+  fi
+done
 
 # Prompt for admin username (non-empty, with validation in a loop)
 while true; do
@@ -68,15 +79,15 @@ while true; do
   fi
 done
 
-# Prompt for smtp password (non-empty, with validation in a loop)
+# Prompt for notification sender email address (non-empty, with validation in a loop)
 while true; do
-  read -p "SMTP Password: " SMTP_PASS
-  if [ -n "$SMTP_PASS" ]; then
-    # If SMTP_PASS is not empty, break the loop
+  read -p "Email Address to send FROM (usually same as username): " EMAIL_FROM
+  if [ -n "$EMAIL_FROM" ]; then
+    # If EMAIL_FROM is not empty, break the loop
     break
   else
     # Print an error message and prompt the user again
-    echo "Error: SMTP password cannot be empty. Please try again."
+    echo "Error: Sending email address cannot be empty. Please try again."
   fi
 done
 
@@ -92,15 +103,15 @@ while true; do
   fi
 done
 
-# Prompt for notification sender email address (non-empty, with validation in a loop)
+# Prompt for smtp password (non-empty, with validation in a loop)
 while true; do
-  read -p "Email Address to send FROM (usually same as username): " EMAIL_FROM
-  if [ -n "$EMAIL_FROM" ]; then
-    # If EMAIL_FROM is not empty, break the loop
+  read -p "SMTP Password: " SMTP_PASS
+  if [ -n "$SMTP_PASS" ]; then
+    # If SMTP_PASS is not empty, break the loop
     break
   else
     # Print an error message and prompt the user again
-    echo "Error: Sending email address cannot be empty. Please try again."
+    echo "Error: SMTP password cannot be empty. Please try again."
   fi
 done
 
@@ -127,6 +138,26 @@ timedatectl set-ntp true
 # Update the system
 apt-get update
 apt-get upgrade -y
+
+########################################
+# Hostname and FQDN
+########################################
+
+# Extract hostname (everything before the first dot)
+SRV_HOSTNAME="${SRV_FQDN_CUSTOM%%.*}"
+
+# Set hostname
+hostnamectl set-hostname "$SRV_HOSTNAME"
+
+# Set hostname and FQDN in hosts file
+cat > /etc/hosts <<EOF
+127.0.0.1   localhost
+127.0.1.1   $SRV_FQDN_CUSTOM $SRV_HOSTNAME
+
+::1         localhost ip6-localhost ip6-loopback
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+EOF
 
 ########################################
 # Users
@@ -356,6 +387,8 @@ systemctl enable --now fail2ban
 
 # Install msmtp (sends mail) and bsd-mailx (provides the 'mail' command)
 apt-get update
+
+echo "msmtp msmtp/apparmor boolean true" | debconf-set-selections
 if ! apt-get install -y msmtp msmtp-mta bsd-mailx; then
   echo "ERROR: Failed to install msmtp packages." >&2
   read -p "Press Enter to exit..."
@@ -399,7 +432,8 @@ sed -i "s|__SMTP_PASS__|${SMTP_PASS}|g" /etc/msmtprc
 # Secure the config file (contains password)
 # Owned by root, readable by msmtp group so non-root users can send mail
 chown root:msmtp /etc/msmtprc
-chmod 640 /etc/msmtprc
+chmod 644 /etc/msmtprc
+chmod 644 /var/log/msmtp.log
 
 unset SMTP_PASS
 
@@ -482,11 +516,14 @@ if [ -f /root/.bash_history ]; then
   : > /root/.bash_history
 fi
 
-clear
-echo "###########################################################"
-echo "Setup Complete!"
-echo "1. Your SSH port is now 1022."
-echo "2. Root login is DISABLED."
-echo "3. You must login as: $ADMIN_USER"
-echo "4. Connect this server to Coolify using port 1022 and user $ADMIN_USER"
-echo "###########################################################"
+mail -s "VPS Setup Complete" "$EMAIL_DEST" <<EOF
+###########################################################
+Setup Complete!
+1. Your SSH port is now 1022.
+2. Root login is DISABLED.
+3. You must login as: $ADMIN_USER
+4. Connect this server to Coolify using port 1022 and user $ADMIN_USER
+###########################################################
+EOF
+
+reboot
