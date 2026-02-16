@@ -1,15 +1,5 @@
 #!/bin/bash
 
-##################################################################################
-# This bash script is usefull to do a basic hardening of a new vps. This
-# script is designed to prepare a server to be connected and managed by Coolify.
-# 
-# Author: OXIVRA
-# Website: https://oxivra.com
-# License: MIT
-# 
-##################################################################################
-
 # Ensure script is run as root
 if [ "$(id -u)" != "0" ]; then
 echo "This script must be run as root" 1>&2
@@ -134,7 +124,7 @@ apt-get upgrade -y
 
 # Create sudo user
 if ! id "$ADMIN_USER" >/dev/null 2>&1; then
-  adduser "$ADMIN_USER"
+  adduser --disabled-password --gecos "" "$ADMIN_USER"
   usermod -aG sudo "$ADMIN_USER"
 fi
 
@@ -150,9 +140,6 @@ if id "$ADMIN_USER" >/dev/null 2>&1; then
   ADMIN_HOME="/home/$ADMIN_USER"
   mkdir -p "$ADMIN_HOME/.ssh"
   echo "$COOLIFY_KEY" > "$ADMIN_HOME/.ssh/authorized_keys"
-  if [ -n "$PERSONAL_KEY" ]; then
-    echo "$PERSONAL_KEY" >> "$ADMIN_HOME/.ssh/authorized_keys"
-  fi
   chmod 700 "$ADMIN_HOME/.ssh"
   chmod 600 "$ADMIN_HOME/.ssh/authorized_keys"
   chown -R "$ADMIN_USER:$ADMIN_USER" "$ADMIN_HOME/.ssh"
@@ -222,7 +209,7 @@ fi
 
 # Explicitly block password auth
 if grep -qE '^[#[:space:]]*PasswordAuthentication' "$SSHD_CONFIG"; then
-  sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD_CONFIG"
+  sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD_CONFIG"
 else
   echo "PasswordAuthentication no" >> "$SSHD_CONFIG"
 fi
@@ -257,16 +244,22 @@ fi
 
 # Shorten login grace time
 if grep -qE '^[#[:space:]]*LoginGraceTime' "$SSHD_CONFIG"; then
-  sed -i 's/^[#[:space:]]*LoginGraceTime.*/LoginGraceTime 20/' "$SSHD_CONFIG"
+  sed -i 's/^[#[:space:]]*LoginGraceTime.*/LoginGraceTime 15/' "$SSHD_CONFIG"
 else
   echo "LoginGraceTime 15" >> "$SSHD_CONFIG"
 fi
 
-# Only allow the admin user to SSH (add more users later if needed)
+# Only allow the admin user and the current user to SSH
+CURRENT_USER="$(whoami)"
+ALLOWED_USERS="$ADMIN_USER"
+if [ "$CURRENT_USER" != "$ADMIN_USER" ]; then
+  ALLOWED_USERS="$ADMIN_USER $CURRENT_USER"
+fi
+
 if grep -qE '^[#[:space:]]*AllowUsers' "$SSHD_CONFIG"; then
-  sed -i "s/^[#[:space:]]*AllowUsers.*/AllowUsers $ADMIN_USER/" "$SSHD_CONFIG"
+  sed -i "s/^[#[:space:]]*AllowUsers.*/AllowUsers $ALLOWED_USERS/" "$SSHD_CONFIG"
 else
-  echo "AllowUsers $ADMIN_USER" >> "$SSHD_CONFIG"
+  echo "AllowUsers $ALLOWED_USERS" >> "$SSHD_CONFIG"
 fi
 
 # Disable X11 forwarding
@@ -290,7 +283,17 @@ else
   echo "AllowAgentForwarding no" >> "$SSHD_CONFIG"
 fi
 
-# Restart SSH to apply changes
+# Validate SSH config and restart SSH or error
+if ! sshd -t; then
+  echo "========================================" >&2
+  echo "ERROR: sshd config is invalid!" >&2
+  echo "SSH was NOT restarted." >&2
+  echo "Please fix $SSHD_CONFIG manually." >&2
+  echo "========================================" >&2
+  read -p "Press Enter to exit..."
+  exit 1
+fi
+
 systemctl restart ssh
 
 ########################################
@@ -342,26 +345,51 @@ systemctl enable --now fail2ban
 ########################################
 
 # Install msmtp (sends mail) and bsd-mailx (provides the 'mail' command)
-apt-get install -y msmtp msmtp-mta bsd-mailx
+apt-get update
+if ! apt-get install -y msmtp msmtp-mta bsd-mailx; then
+  echo "ERROR: Failed to install msmtp packages." >&2
+  read -p "Press Enter to exit..."
+  exit 1
+fi
 
-# Configure msmtp
-cat > /etc/msmtprc <<EOF
+# Determine TLS mode based on port
+if [ "$SMTP_PORT" = "465" ]; then
+  TLS_STARTTLS="off"
+else
+  TLS_STARTTLS="on"
+fi
+
+# Create msmtp config file with placeholders
+cat > /etc/msmtprc <<'EOF'
 defaults
 auth           on
 tls            on
+tls_starttls   __TLS_STARTTLS__
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
+tls_min_protocol tlsv1.2
 logfile        /var/log/msmtp.log
 
 account        default
-host           $SMTP_HOST
-port           $SMTP_PORT
-from           $EMAIL_FROM
-user           $SMTP_USER
-password       $SMTP_PASS
+host           __SMTP_HOST__
+port           __SMTP_PORT__
+from           __EMAIL_FROM__
+user           __SMTP_USER__
+password       __SMTP_PASS__
 EOF
 
+# Replace place holders with values
+# Done separately to avoid issues with special caracters in the variables
+sed -i "s|__TLS_STARTTLS__|${TLS_STARTTLS}|g" /etc/msmtprc
+sed -i "s|__SMTP_HOST__|${SMTP_HOST}|g" /etc/msmtprc
+sed -i "s|__SMTP_PORT__|${SMTP_PORT}|g" /etc/msmtprc
+sed -i "s|__EMAIL_FROM__|${EMAIL_FROM}|g" /etc/msmtprc
+sed -i "s|__SMTP_USER__|${SMTP_USER}|g" /etc/msmtprc
+sed -i "s|__SMTP_PASS__|${SMTP_PASS}|g" /etc/msmtprc
+
 # Secure the config file (contains password)
-chmod 600 /etc/msmtprc
+# Owned by root, readable by msmtp group so non-root users can send mail
+chown root:msmtp /etc/msmtprc
+chmod 640 /etc/msmtprc
 
 unset SMTP_PASS
 
