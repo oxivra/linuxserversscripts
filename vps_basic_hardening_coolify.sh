@@ -1,5 +1,15 @@
 #!/bin/bash
 
+##################################################################################
+# This bash script is usefull to do a basic hardening of a new vps. This
+# script is designed to prepare a server to be connected and managed by Coolify.
+# 
+# Author: OXIVRA
+# Website: https://oxivra.com
+# License: MIT
+# 
+##################################################################################
+
 # Ensure script is run as root
 if [ "$(id -u)" != "0" ]; then
 echo "This script must be run as root" 1>&2
