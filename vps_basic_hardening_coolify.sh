@@ -412,7 +412,6 @@ auth           on
 tls            on
 tls_starttls   __TLS_STARTTLS__
 tls_trust_file /etc/ssl/certs/ca-certificates.crt
-tls_min_protocol tlsv1.2
 logfile        /var/log/msmtp.log
 
 account        default
