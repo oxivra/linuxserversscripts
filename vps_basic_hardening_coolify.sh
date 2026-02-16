@@ -291,7 +291,7 @@ else
 fi
 
 # Only allow the admin user and the current user to SSH
-CURRENT_USER="$(whoami)"
+CURRENT_USER="$SUDO_USER"
 ALLOWED_USERS="$ADMIN_USER"
 if [ "$CURRENT_USER" != "$ADMIN_USER" ]; then
   ALLOWED_USERS="$ADMIN_USER $CURRENT_USER"
