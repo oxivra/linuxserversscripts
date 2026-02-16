@@ -324,6 +324,9 @@ else
   echo "AllowAgentForwarding no" >> "$SSHD_CONFIG"
 fi
 
+# Generate SSH host keys if missing
+ssh-keygen -A
+
 # Validate SSH config and restart SSH or error
 if ! sshd -t; then
   echo "========================================" >&2
